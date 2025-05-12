@@ -38,6 +38,9 @@ void app_main() {
   gpio_reset_pin(GPIO_NUM_26);
   gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
 
+  gpio_reset_pin(GPIO_NUM_14);
+  gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
 
@@ -47,8 +50,11 @@ void app_main() {
   kiss_fftr_cfg cfg = kiss_fftr_alloc(SOUND_BUF_SZ, 0, NULL, NULL);
   kiss_fft_cpx *cx_out = (kiss_fft_cpx *) calloc(SOUND_BUF_SZ / 2 + 1, sizeof(kiss_fft_cpx));
 
+  pth
+
   while(1) {
     gpio_set_level(GPIO_NUM_26, 0);
+    gpio_set_level(GPIO_NUM_14, 0);
     read_mic_samples(input, ADC1_CHANNEL_6, SOUND_BUF_SZ, 1);
 
     // normalization (0 .. 4095 -> -1.0 .. +1.0)
@@ -66,20 +72,24 @@ void app_main() {
 
     float bass_level = 0.0f;
     int min_bin = 0;
-    int max_bin = 50;
+    int max_bin = 30;
     for (int i = min_bin; i <= max_bin; i++) {
       bass_level += spectre[i];
     }
 
-    if (bass_level > 100) gpio_set_level(GPIO_NUM_26, 1);
+    if (bass_level > 80) {
+      gpio_set_level(GPIO_NUM_14, 1);
+    }
+
+    if (bass_level > 95) {
+      gpio_set_level(GPIO_NUM_26, 1);
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
 
     // output
     printf("bass = %.2f\n", bass_level);
-    printf("\n");
-    printf("\n");
-    printf("\n");
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(30));
   }
 
   gpio_set_level(GPIO_NUM_26, 0);
