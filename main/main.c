@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
+#include <pthread.h>
 
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
@@ -12,6 +13,13 @@
 
 const unsigned SOUND_BUF_SZ = 128;
 typedef unsigned short uint16_t;
+
+const float LIGHT_ON_THRESHOLD = 180000.0f;
+
+struct light_controller {
+  float val;
+  int light_on; // false by default
+};
 
 static void read_mic_samples(float *const buffer, adc1_channel_t channel,
                              unsigned buf_sz, uint32_t t_quantum_ms) {
@@ -34,6 +42,25 @@ static float calc_mean(const float * const arr, unsigned size) {
   return mean;
 }
 
+static void *control_light(void * light_info) {
+  assert(light_info);
+
+  int *light_on = &(((struct light_controller *) light_info)->light_on);
+
+  while(1) {
+    float level = ((struct light_controller *) light_info)->val;
+    if (level >= LIGHT_ON_THRESHOLD) {
+      *(int *) light_on = 1;
+    } else {
+      *(int *) light_on = 0;
+    }
+
+    printf ("control light : level = %.2f desicion = %d\n", level, *light_on);
+
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+}
+
 void app_main() {
   gpio_reset_pin(GPIO_NUM_26);
   gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
@@ -50,17 +77,27 @@ void app_main() {
   kiss_fftr_cfg cfg = kiss_fftr_alloc(SOUND_BUF_SZ, 0, NULL, NULL);
   kiss_fft_cpx *cx_out = (kiss_fft_cpx *) calloc(SOUND_BUF_SZ / 2 + 1, sizeof(kiss_fft_cpx));
 
-  pth
+  struct light_controller light_info;
+  light_info.val = 0.0f;
+  light_info.light_on = 0;
+
+  pthread_t light_controller_thr;
+  pthread_create(&light_controller_thr, NULL, control_light, (void *) &light_info);
 
   while(1) {
     gpio_set_level(GPIO_NUM_26, 0);
     gpio_set_level(GPIO_NUM_14, 0);
     read_mic_samples(input, ADC1_CHANNEL_6, SOUND_BUF_SZ, 1);
 
-    // normalization (0 .. 4095 -> -1.0 .. +1.0)
-    for (uint16_t i = 0; i < SOUND_BUF_SZ; i++)
-      input[i] = ((float) input[i] - 2048.0f) / 2048.0f;
+    light_info.val = 0;
 
+    // normalization (0 .. 4095 -> -1.0 .. +1.0)
+    for (uint16_t i = 0; i < SOUND_BUF_SZ; i++) {
+      // turn on light based on volume
+      light_info.val += input[i];
+      // normalize
+      input[i] = ((float) input[i] - 2048.0f) / 2048.0f;
+    }
     // apply fft
     kiss_fftr(cfg, input, cx_out);
 
@@ -77,9 +114,7 @@ void app_main() {
       bass_level += spectre[i];
     }
 
-    if (bass_level > 80) {
-      gpio_set_level(GPIO_NUM_14, 1);
-    }
+    gpio_set_level(GPIO_NUM_14, light_info.light_on);
 
     if (bass_level > 95) {
       gpio_set_level(GPIO_NUM_26, 1);
@@ -87,7 +122,7 @@ void app_main() {
     }
 
     // output
-    printf("bass = %.2f\n", bass_level);
+    printf("bass = %.2f | mean = %.2f\n", bass_level, light_info.val);
 
     vTaskDelay(pdMS_TO_TICKS(30));
   }
